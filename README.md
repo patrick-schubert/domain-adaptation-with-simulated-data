@@ -8,7 +8,9 @@ This repository contains code for the **Learning from Simulated Data in Highly S
 
 This project aimed to propose a principled aproach to learn from simulated data and make inference with real data.
 
-Dataset consist of samples from extremely rare events, Gravitational Lens.
+Dataset consist of samples from extremely rare events, Gravitational Lens. 
+
+Objective: Estimate the Einstein Radius given the Multi-Spectral source.
 
 <img src="https://github.com/patrick-schubert/domain-adaptation-with-simulated-data/blob/main/imgs/ilustration.jpg" width="50%" />
 
@@ -233,5 +235,263 @@ Finally we got fresh data that will make the learning process a lot easier for t
 
 ### Learning Process
 
+Many Deep Learning techniques were implemented in order to solve this regression problem. Some of them are novel and were developed exclusively for this problem.
 
+Deep Learning techniques:
+
+- Deterministic Shallower ResNet based model
+- Bayesian Shallower ResNet based model
+- Meta-Learning model
+- Adversarial Training
+- ShiftNet model *
+- GAN based Domain Adaptation model *
+- Continous Normalizing Flows based Domain Adaptation model *
+
+* Custom and novel models designed by the course of work
+
+A custom ResNet model was implemented in every Deep Learning technique applyied, a shallower one with 10 layers. 
+
+#### Callbacks and Custom Tensorflow code
+
+Custom callbacks for analysing in training results and a function to transform any deterministic Tensorflow 2 model in a probabilistic one were developed at the course the training process. 
+
+```python3
+class Probabilistic_Dispersion(tf.keras.callbacks.Callback):
+    def __init__(self, monte_carlo):
+        super().__init__()
+        self.mc = monte_carlo
+    
+    def loss_prob_helper(self, real, pred_train):
+        tmp = []
+        for i in range(self.mc):
+            tmp.append(sum(np.square(real - pred_train[:,i,:])) / real.shape[0])
+        tmp = np.stack(tmp, axis=0)
+        tmp_mean = tmp.mean(axis=0)[0]
+        tmp_std = tmp.std(axis=0)[0]
+        return tmp_mean, tmp_std
+
+    def dispersion_prob_helper(self, real, pred_train):
+        error = []
+        for i in range(self.mc):
+            error.append((real - pred_train[:,i,:]) / real)
+
+        error = np.stack(error, axis=1)
+        error_mean = error.mean(axis=1)
+        error_std = error.std(axis=1)
+        return error_mean, error_std
+    
+    def on_epoch_end(self, epoch, logs=None):
+        
+        fig, ax = plt.subplots(1,2, figsize = (10,5))
+        
+        indexes = np.random.randint(X_train.shape[0], size=batch_size)
+        pred_train = [model.predict(X_train[indexes]) for _ in range(self.mc)]
+        pred_train = np.stack(pred_train, axis=1)
+        
+        disp_mean, disp_std = self.dispersion_prob_helper(Y_train[indexes], pred_train)
+        loss_mean, loss_std = self.loss_prob_helper(Y_train[indexes], pred_train)
+        
+        ax[0].scatter(Y_train[indexes], disp_mean)
+        ax[0].set_title('Train')
+        ax[0].legend([f" {loss_mean:0.3f} ± {loss_std:0.3f}"])
+        ax[0].plot((0.5,2.5), (0,0), alpha = 0.3)
+        ax[0].errorbar(Y_train[indexes], disp_mean, yerr = disp_std[:,0], linestyle = '', capsize = 5, alpha = 0.2, ecolor= 'b')
+        
+        
+        pred_val = [model.predict(X_val) for _ in range(self.mc)]
+        pred_val = np.stack(pred_val, axis=1)
+        
+        disp_mean, disp_std = self.dispersion_prob_helper(Y_val, pred_val)
+        loss_mean, loss_std = self.loss_prob_helper(Y_val, pred_val)
+        
+        ax[1].scatter(Y_val, disp_mean)
+        ax[1].set_title('Val')
+        ax[1].legend([f" {loss_mean:0.3f} ± {loss_std:0.3f}"])
+        ax[1].plot((0.5,2.5), (0,0), alpha = 0.3)
+        ax[1].errorbar(Y_val, disp_mean, yerr = disp_std[:,0], linestyle = '', capsize = 5, alpha = 0.2, ecolor= 'b' )
+        plt.show()
+```
+
+```python3
+def replacer(model, to_be_replaced, replace, replace_args = {}, keep_args = []):
+    def inputs_outputs(model):
+        layers = [l for l in model.layers]
+        outputs = []
+        inputs = []
+        for i in range(len(layers)):
+            outputs.append(layers[i].output.name)
+            if type(layers[i].input) == list:
+                inputs.append([])
+                for j in range(len(layers[i].input)):
+                    inputs[i].extend([outputs.index(layers[i].input[j].name, 0, i)])
+
+            else:
+                inputs.append(outputs.index(layers[i].input.name))
+        return inputs, outputs
+
+    layers = [l for l in model.layers]
+    inputs, outputs = inputs_outputs(model)
+
+
+    inp_ = layers[0].input
+    pointers = []
+    pointers.append(inp_)
+    for i in range(1, len(layers)):
+        tmp = layers[i].__class__
+        tmp_config = layers[i].get_config()
+
+        if type(layers[i]) == to_be_replaced:
+            
+            tmp_config.update(replace_args)
+            if keep_args != []:
+                for remove in keep_args:
+                    tmp_config.pop(remove)
+            new_layer = replace(**tmp_config)
+            x = new_layer(pointers[inputs[i]])
+            pointers.append(x)
+        else:
+            if type(layers[i].input) == list:
+                tmp_input = []
+                for j in range(len(layers[i].input)):
+                    tmp_input.append(pointers[inputs[i][j]])
+            else:
+                tmp_input = pointers[inputs[i]]
+                
+            new_layer = tmp(**tmp_config)
+            x = new_layer(tmp_input)
+            pointers.append(x)
+
+    tmp_model = tf.keras.models.Model(inputs = inp_, outputs = x)
+    
+    return tmp_model
+
+```
+
+`Deterministic to Probabilistic in a function`
+
+```python3
+inp = ResNet10V2(X_val[0,:,:,:].shape)
+y_hat = tf.keras.layers.Dense(1)(inp.layers[-2].output)
+
+model = tf.keras.models.Model(inputs = inp.input, outputs = y_hat)
+model.compile(optimizer = optimizer, loss = "mse")
+
+
+kernel_divergence_fn = lambda q, p, _: tfd.kl_divergence(q, p) / tf.cast(X_train.shape[0], dtype="float32")
+model = replacer(model, tf.keras.layers.Conv2D, 
+                      tfp.layers.Convolution2DFlipout,
+                      dict(kernel_divergence_fn = kernel_divergence_fn, bias_divergence_fn = kernel_divergence_fn), 
+                      ['use_bias', 'bias_initializer', 'bias_regularizer', 'bias_constraint', 'kernel_initializer', 'kernel_regularizer', 'kernel_constraint'])
+```
+
+
+
+#### Model Realm
+
+Model-Agnostic Meta-Learning (MAML) is a remarkable Deep Learning technique but sometimes their implementation and use comes a bit fuzzy. Below is a consise, fast and simple to use Tensorflow 2 MAML implementation designed by the course of the work.
+
+```python3
+#Run the model eagerly
+class Maml(tf.keras.Model):
+    def outter_data(self,x,y, k = 5, evenly = False):
+        if evenly:
+            space = np.ceil(len(y) / k).astype('int32')
+            arg = np.argsort(y, axis=0)
+            indexes = arg[::space].flatten()
+        else:
+            indexes = np.random.randint(0,y.shape[0], k)
+        self.outter_x = tf.convert_to_tensor(x[indexes])
+        self.outter_y = tf.convert_to_tensor(y[indexes])
+    
+    def copy_model(self, x):
+        
+        copied_model = Maml(self.inputs, self.outputs)
+        copied_model.set_weights(self.get_weights())
+        return copied_model
+
+    def train_step(self, data):
+        x, y = data
+        
+        with tf.GradientTape() as test_tape:
+            with tf.GradientTape() as train_tape:
+                y_pred = self(x, training=True)
+                loss = self.compiled_loss(y, y_pred, regularization_losses=self.losses)
+
+            trainable_vars = self.trainable_variables
+            gradients = train_tape.gradient(loss, trainable_vars)
+        
+            model_copy = self.copy_model(x)
+            self.optimizer.apply_gradients(zip(gradients, model_copy.trainable_variables))
+
+            test_y_pred = model_copy(self.outter_x, training=True)
+            test_loss = self.compiled_loss(self.outter_y, test_y_pred, regularization_losses=self.losses)
+            
+        gradients = test_tape.gradient(test_loss, self.trainable_variables)
+        self.optimizer.apply_gradients(zip(gradients, self.trainable_variables))
+        self.compiled_metrics.update_state(y, y_pred)
+
+        return {m.name: m.result() for m in self.metrics}
+```
+
+`Fast and simple to use`
+
+```python3
+inp = ResNet10V2(X_val[0,:,:,:].shape)
+y_hat = tf.keras.layers.Dense(1)(inp.layers[-2].output)
+
+model = Maml(inp.input, y_hat)
+model.compile(optimizer = optimizer, loss = "mse", run_eagerly=True)
+```
+
+#### Novel Models
+
+The models designed by the course of this work have many "bits and bytes", they are out of the scope os this presentation but preliminar code can be accessed here: [Lab](https://github.com/patrick-schubert/domain-adaptation-with-simulated-data/blob/main/Lab.ipynb)
+
+
+### Results
+
+After all workflow applying at this task we achieved the desired goal of aproximate minimal 10% fractional error.
+
+Plots below describe the fractional error between predictions and true values at Y axis and the entire Einstein Radius dataset range at X axis.
+
+<table border="0">
+  
+<tr>
+  <td >
+  Before Pre-Processing Results
+  </td>
+  <td>
+  After Pre-Processing Results
+  </td>
+</tr>
+  
+<tr>
+    <td>
+    <img src="https://github.com/patrick-schubert/domain-adaptation-with-simulated-data/blob/main/imgs/before_preprocesisng.png" width="100%" />
+    </td>
+    <td>
+    <img src="https://github.com/patrick-schubert/domain-adaptation-with-simulated-data/blob/main/imgs/det_results.png", width="100%" />
+    </td>
+</tr>
+
+<tr>
+  <td >
+  Probabilistc Results
+  </td>
+  <td>
+  Best Model Results
+  </td>
+</tr>
+
+<tr>
+  <td>
+  <img src="https://github.com/patrick-schubert/domain-adaptation-with-simulated-data/blob/main/imgs/prob_results.png" width="100%" />
+  </td>
+  <td>
+  <img src="https://github.com/patrick-schubert/domain-adaptation-with-simulated-data/blob/main/imgs/best_results.png", width="100%" />
+  </td>
+</tr>
+
+
+</table>
 
