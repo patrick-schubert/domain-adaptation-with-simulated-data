@@ -89,7 +89,7 @@ with Pool(cpu_count()) as p:
 
 images = np.concatenate(pool_outputs, axis=0)
 ```
-#### Data Structures
+#### Design Decisions
 
 Datasets were implemented with OOP to grant cohesian between data sources and give an easy time for everyone working around with them, making them iterate through the data analysis step faster.
 
@@ -180,8 +180,8 @@ This step was crucial to make things work as expected as their absense made the 
 Pre-Processing decisions were taken as to minimize the difference between the density of simulated datasets and the real one. This process ensures that sample data can only "wiggle" around inside the real distribution, making the expected simulated sample closer to the real. 
 
 ```python3
-challenge1.adjust_distributions([99.6, 99.6, 99.6], [99.5, 99.5, 99.5], plot=True, normalize= True,density = True, 
-                                                                        compare = real,  sanity = False, k = 4,bins = 100)
+challenge1.adjust_distributions([99.6, 99.6, 99.6], [99.5, 99.5, 99.5], plot=True, normalize= True,
+                                density = True, compare = real,  sanity = False, k = 4,bins = 100)
 ```
 
 ![hist](https://github.com/patrick-schubert/domain-adaptation-with-simulated-data/blob/main/imgs/hist.png)
@@ -189,7 +189,7 @@ challenge1.adjust_distributions([99.6, 99.6, 99.6], [99.5, 99.5, 99.5], plot=Tru
 
 #### Pre-Processing Results
 
-Finally we got fresh data that will make the learning process a lot easier for the model.
+Finally we got fresh data that will make the learning process a lot easier for the learning process.
 
 
 <table border="0">
@@ -243,11 +243,11 @@ Deep Learning techniques:
 - Bayesian Shallower ResNet based model
 - Meta-Learning model
 - Adversarial Training
-- ShiftNet model *
-- GAN based Domain Adaptation model *
-- Continous Normalizing Flows based Domain Adaptation model *
+- ShiftNet model **
+- GAN based Domain Adaptation model **
+- Continous Normalizing Flows based Domain Adaptation model **
 
-* Custom and novel models designed by the course of work
+** Custom and novel models designed by the course of work
 
 A custom ResNet model was implemented in every Deep Learning technique applyied, a shallower one with 10 layers. 
 
@@ -441,16 +441,17 @@ y_hat = tf.keras.layers.Dense(1)(inp.layers[-2].output)
 
 model = Maml(inp.input, y_hat)
 model.compile(optimizer = optimizer, loss = "mse", run_eagerly=True)
+model.outter_data(X_val, Y_val, k = 5, evenly = True)
 ```
 
 #### Novel Models
 
-The models designed by the course of this work have many "bits and bytes", they are out of the scope os this presentation but preliminar code can be accessed here: [Lab](https://github.com/patrick-schubert/domain-adaptation-with-simulated-data/blob/main/Lab.ipynb)
+The models designed by the course of this work have many "bits and bytes". They are out of the scope os this presentation but preliminar code can be accessed here: [Lab](https://github.com/patrick-schubert/domain-adaptation-with-simulated-data/blob/main/Lab.ipynb)
 
 
 ### Results
 
-After all workflow applying at this task we achieved the desired goal of aproximate minimal 10% fractional error.
+After all workflow applyied at this task we achieved the desired goal of aproximate minimal 10% fractional error.
 
 Plots below describe the fractional error between predictions and true values at Y axis and the entire Einstein Radius dataset range at X axis.
 
